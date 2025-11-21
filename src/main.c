@@ -15,6 +15,7 @@ struct Chip8{
 	uint16_t sp;
 	uint8_t delay_timer;
 	uint8_t sound_timer;
+	uint8_t  drawFlag;
 
 };
 struct Chip8 chip8;
@@ -106,6 +107,9 @@ void execute(){
 					chip8.sp--;
 					chip8.pc=chip8.stack[chip8.sp];
 					break;
+				default:
+					printf("Unknown opcode: 0x%X\n", opcode);
+					break;
 			}
 			break;
     case 0x1000:
@@ -135,19 +139,32 @@ void execute(){
 		chip8.V[X]=kk;
         break;
     case 0x7000:
-		chip8.V[X]=chip8.V[X]+kk;
+		chip8.V[X]+=kk;
         break;
     case 0x8000:
         switch (opcode & 0xF) {
             case 0x0:
+				chip8.V[X]=chip8.V[Y];
                 break;
             case 0x1:
+				chip8.V[X]|=chip8.V[Y];
                 break;
             case 0x2:
+				chip8.V[X] &= chip8.V[Y];
                 break;
             case 0x3:
+				chip8.V[X] ^=chip8.V[Y];
                 break;
             case 0x4:
+				if(chip8.V[X]+chip8.V[Y]>0xFF){
+					chip8.V[X]=(chip8.V[X]+chip8.V[Y])&0xFF;
+					chip8.V[0xF]=1;
+
+				}
+				else{
+					chip8.V[X]=(chip8.V[X]+chip8.V[Y])&0xFF;
+					chip8.V[0xF]=0;
+				}
                 break;
             case 0x5:
                 break;
@@ -157,6 +174,9 @@ void execute(){
                 break;
             case 0xE:
                 break;
+			default:
+				printf("Unknown opcode: 0x%X\n", opcode);
+				break;
         }
 
         break;
@@ -176,6 +196,9 @@ void execute(){
                 break;
             case 0xA1:
                 break;
+			default:
+				printf("Unknown opcode: 0x%X\n", opcode);
+				break;
         }
 
         break;
