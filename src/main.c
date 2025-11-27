@@ -18,6 +18,7 @@ struct Chip8{
 	uint8_t  drawFlag;
 
 };
+
 struct Chip8 chip8;
 
 void initalize(){
@@ -102,6 +103,7 @@ void execute(){
         switch(opcode & 0x00FF){
 				case 0x00E0: // CLS
 					memset(chip8.display,0,64*32);
+					chip8.drawFlag = 1;
 					break;
 				case 0x00EE: // RET
 					chip8.sp--;
@@ -207,6 +209,26 @@ void execute(){
 		chip8.V[X]=randValue & kk;
         break;
     case 0xD000:
+		{
+			uint8_t x=chip8.V[X]%64;
+			uint8_t y=chip8.V[Y]%32;
+			uint8_t width=8;
+			uint8_t height=n;
+			chip8.V[0xF]=0;
+			for(int row=0;row<height;row++){
+				uint8_t spriteByte=chip8.memory[chip8.I+row];
+				for(int col=0;col<width;col++){
+					if((spriteByte & (0x80>>col))!=0){
+						uint16_t displayIndex=(x+col+(y+row)*64);
+						if(chip8.display[displayIndex]){
+							chip8.V[0xF]=1;
+						}
+						chip8.display[displayIndex]^=1;
+					}
+				}
+			}
+			chip8.drawFlag=1;
+		}
 
         break;
     case 0xE000:
@@ -224,22 +246,36 @@ void execute(){
     case 0xF000:
         switch (opcode & 0xFF) {
             case 0x07:
+				chip8.V[X]=chip8.delay_timer;
                 break;
             case 0x0A:
                 break;
             case 0x15:
+				chip8.delay_timer=chip8.V[X];
                 break;
             case 0x18:
+				chip8.sound_timer=chip8.V[X];
                 break;
             case 0x1E:
+				chip8.I+=chip8.V[X];
                 break;
             case 0x29:
+				chip8.I=chip8.V[X]*5;
                 break;
             case 0x33:
+				chip8.memory[chip8.I]=chip8.V[X]/100;
+				chip8.memory[chip8.I+1]=(chip8.V[X]/10)%10;
+				chip8.memory[chip8.I+2]=chip8.V[X]%10;
                 break;
             case 0x55:
+				for(int index=0;index<=X;index++){
+					chip8.memory[chip8.I+index]=chip8.V[index];
+				}
                 break;
             case 0x65:
+				for(int index=0;index<=X;index++){
+					chip8.V[index]=chip8.memory[chip8.I+index];
+				}
                 break;
         }
 
@@ -253,23 +289,25 @@ int main ()
 {
 
 	SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_HIGHDPI);
-	SetExitKey(0);
+	//SetExitKey(0);
 	InitWindow(1280, 800, "Chip8");
 	SearchAndSetResourceDir("resources");
 	initalize();
-	if(loadROM("IBMLogo.ch8")){
+	if(loadROM("roms\\test_opcode.ch8")){
 		return 1;
 	}
-	while (!WindowShouldClose())
-	{
+while (!WindowShouldClose())
+{
+    // Run CPU cycles
+    for (int i = 0; i < 10; i++) {
+        execute();
+    }
 
-		BeginDrawing();
-		ClearBackground(BLACK);
-
-
-		EndDrawing();
-	}
-
+    BeginDrawing();
+    ClearBackground(BLACK);   // ALWAYS clear ONCE per frame
+    drawDisplay();            // ALWAYS draw framebuffer
+    EndDrawing();
+}
 
 	CloseWindow();
 	return 0;
