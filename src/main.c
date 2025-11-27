@@ -156,23 +156,34 @@ void execute(){
 				chip8.V[X] ^=chip8.V[Y];
                 break;
             case 0x4:
-				if(chip8.V[X]+chip8.V[Y]>0xFF){
-					chip8.V[X]=(chip8.V[X]+chip8.V[Y])&0xFF;
-					chip8.V[0xF]=1;
-
-				}
-				else{
-					chip8.V[X]=(chip8.V[X]+chip8.V[Y])&0xFF;
-					chip8.V[0xF]=0;
-				}
+				uint16_t sum=chip8.V[X]+chip8.V[Y];
+				chip8.V[0xF]=(sum>0xFF)?1:0;
+				chip8.V[X]=sum&0xFF;
                 break;
             case 0x5:
+				chip8.V[0xF]=(chip8.V[X]>chip8.V[Y])?1:0;
+				chip8.V[X]-=chip8.V[Y];
                 break;
             case 0x6:
+				if(chip8.V[X]&0x1){
+					chip8.V[0xF]=1;
+				}else{
+					chip8.V[0xF]=0;
+				}
+				chip8.V[X]>>=1;
+
                 break;
             case 0x7:
+				chip8.V[0xF]=(chip8.V[Y]>chip8.V[X])?1:0;
+				chip8.V[X]=chip8.V[Y]-chip8.V[X];
                 break;
             case 0xE:
+				if((chip8.V[X] & 0x80) !=0){
+					chip8.V[0xF]=1;
+				}else{
+					chip8.V[0xF]=0;
+				}
+				chip8.V[X]<<=1;
                 break;
 			default:
 				printf("Unknown opcode: 0x%X\n", opcode);
@@ -181,14 +192,22 @@ void execute(){
 
         break;
     case 0x9000:
+		if(chip8.V[X]!=chip8.V[Y]){
+			chip8.pc+=2;
+		}
         break;
     case 0xA000:
+		chip8.I=nnn;
         break;
     case 0xB000:
+		chip8.pc=nnn+chip8.V[0];
         break;
     case 0xC000:
+		int randValue = GetRandomValue(0, 255);
+		chip8.V[X]=randValue & kk;
         break;
     case 0xD000:
+
         break;
     case 0xE000:
         switch (opcode & 0xFF) {
