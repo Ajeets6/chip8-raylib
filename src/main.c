@@ -16,6 +16,7 @@ struct Chip8{
 	uint8_t delay_timer;
 	uint8_t sound_timer;
 	uint8_t  drawFlag;
+	uint16_t keypad;
 
 };
 
@@ -57,6 +58,29 @@ void initalize(){
 		}
 }
 
+void UpdateChip8Keys(void)
+{
+    chip8.keypad = 0;
+
+    if (IsKeyDown(KEY_X)) chip8.keypad |= (1 << 0x0);
+    if (IsKeyDown(KEY_ONE)) chip8.keypad |= (1 << 0x1);
+    if (IsKeyDown(KEY_TWO)) chip8.keypad |= (1 << 0x2);
+    if (IsKeyDown(KEY_THREE)) chip8.keypad |= (1 << 0x3);
+    if (IsKeyDown(KEY_Q)) chip8.keypad |= (1 << 0x4);
+    if (IsKeyDown(KEY_W)) chip8.keypad |= (1 << 0x5);
+    if (IsKeyDown(KEY_E)) chip8.keypad |= (1 << 0x6);
+    if (IsKeyDown(KEY_A)) chip8.keypad |= (1 << 0x7);
+    if (IsKeyDown(KEY_S)) chip8.keypad |= (1 << 0x8);
+    if (IsKeyDown(KEY_D)) chip8.keypad |= (1 << 0x9);
+    if (IsKeyDown(KEY_Z)) chip8.keypad |= (1 << 0xA);
+    if (IsKeyDown(KEY_C)) chip8.keypad |= (1 << 0xB);
+    if (IsKeyDown(KEY_FOUR)) chip8.keypad |= (1 << 0xC);
+    if (IsKeyDown(KEY_R)) chip8.keypad |= (1 << 0xD);
+    if (IsKeyDown(KEY_F)) chip8.keypad |= (1 << 0xE);
+    if (IsKeyDown(KEY_V)) chip8.keypad |= (1 << 0xF);
+}
+
+
 int loadROM(const char* filename){
 	FILE* rom=fopen(filename,"rb");
 	if(rom==NULL){
@@ -83,6 +107,18 @@ void drawDisplay(){
 				DrawRectangle(x*10,y*10,10,10,WHITE);
 			}
 		}
+	}
+}
+
+void updateTimers(){
+	if(chip8.delay_timer>0){
+		chip8.delay_timer--;
+	}
+	if(chip8.sound_timer>0){
+		if(chip8.sound_timer==1){
+			// Beep sound
+		}
+		chip8.sound_timer--;
 	}
 }
 
@@ -234,8 +270,15 @@ void execute(){
     case 0xE000:
         switch (opcode & 0xFF) {
             case 0x9E:
+				if (chip8.keypad & (1 << chip8.V[X])) {
+                chip8.pc += 2;
+            	}
                 break;
+
             case 0xA1:
+				if (!(chip8.keypad & (1 << chip8.V[X]))) {
+				chip8.pc += 2;
+			}
                 break;
 			default:
 				printf("Unknown opcode: 0x%X\n", opcode);
@@ -249,7 +292,21 @@ void execute(){
 				chip8.V[X]=chip8.delay_timer;
                 break;
             case 0x0A:
-                break;
+
+				bool keyPressed = false;
+
+				for (uint8_t k = 0; k < 16; k++) {
+					if (chip8.keypad & (1 << k)) {
+						chip8.V[X] = k;
+						keyPressed = true;
+						break;
+					}
+				}
+
+				if (!keyPressed) {
+					chip8.pc -= 2;   // stall
+				}
+				break;
             case 0x15:
 				chip8.delay_timer=chip8.V[X];
                 break;
@@ -293,7 +350,7 @@ int main ()
 	InitWindow(1280, 800, "Chip8");
 	SearchAndSetResourceDir("resources");
 	initalize();
-	if(loadROM("roms\\test_opcode.ch8")){
+	if(loadROM("roms\\PONG")){
 		return 1;
 	}
 while (!WindowShouldClose())
@@ -305,6 +362,8 @@ while (!WindowShouldClose())
 
     BeginDrawing();
     ClearBackground(BLACK);   // ALWAYS clear ONCE per frame
+	updateTimers();
+	UpdateChip8Keys();
     drawDisplay();            // ALWAYS draw framebuffer
     EndDrawing();
 }
