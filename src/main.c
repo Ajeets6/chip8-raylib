@@ -110,13 +110,13 @@ void drawDisplay(){
 	}
 }
 
-void updateTimers(){
+void updateTimers(Sound Wav){
 	if(chip8.delay_timer>0){
 		chip8.delay_timer--;
 	}
 	if(chip8.sound_timer>0){
 		if(chip8.sound_timer==1){
-			// Beep sound
+			PlaySound(Wav); // Beep sound
 		}
 		chip8.sound_timer--;
 	}
@@ -349,6 +349,8 @@ int main ()
 	//SetExitKey(0);
 	InitWindow(1280, 800, "Chip8");
 	SearchAndSetResourceDir("resources");
+	InitAudioDevice();
+    Sound Wav = LoadSound("BEEP2.wav");
 	initalize();
 	if(loadROM("roms\\PONG")){
 		return 1;
@@ -362,12 +364,13 @@ while (!WindowShouldClose())
 
     BeginDrawing();
     ClearBackground(BLACK);   // ALWAYS clear ONCE per frame
-	updateTimers();
+	updateTimers(Wav);
 	UpdateChip8Keys();
-    drawDisplay();            // ALWAYS draw framebuffer
+    drawDisplay();            // ALWAYS draw framebuffers
     EndDrawing();
 }
-
+	UnloadSound(Wav);
+	CloseAudioDevice();
 	CloseWindow();
 	return 0;
 }
