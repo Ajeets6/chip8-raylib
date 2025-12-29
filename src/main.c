@@ -1,9 +1,14 @@
 #include "raylib.h"
-#include "resource_dir.h"	// utility header for SearchAndSetResourceDir
+//#include "resource_dir.h"	// utility header for SearchAndSetResourceDir
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
-
+#if defined(PLATFORM_WEB)
+    #include <emscripten/emscripten.h>
+#endif
+#define CHIP_SCALE 10
+#define CHIP_W     (64 * CHIP_SCALE)
+#define CHIP_H     (32 * CHIP_SCALE)
 
 struct Chip8{
 	uint8_t memory[4096];
@@ -100,26 +105,43 @@ int loadROM(const char* filename){
 	return 0;
 }
 
-void drawDisplay(){
-	for(int y=0;y<32;y++){
-		for(int x=0;x<64;x++){
-			if(chip8.display[x+y*64]){
-				DrawRectangle(x*10,y*10,10,10,WHITE);
-			}
-		}
-	}
+void drawDisplay(void)
+{
+    for (int y = 0; y < 32; y++) {
+        for (int x = 0; x < 64; x++) {
+            if (chip8.display[x + y * 64]) {
+                DrawRectangle(
+                    x * CHIP_SCALE,
+                    y * CHIP_SCALE,
+                    CHIP_SCALE,
+                    CHIP_SCALE,
+                    WHITE
+                );
+            }
+        }
+    }
 }
 
-void updateTimers(Sound Wav){
-	if(chip8.delay_timer>0){
-		chip8.delay_timer--;
-	}
-	if(chip8.sound_timer>0){
-		if(chip8.sound_timer==1){
-			PlaySound(Wav); // Beep sound
-		}
-		chip8.sound_timer--;
-	}
+void updateTimers(Sound wav)
+{
+    static double lastTick = 0.0;
+    double now = GetTime();
+
+    if (now - lastTick >= (1.0 / 60.0)) {
+
+        if (chip8.delay_timer > 0) {
+            chip8.delay_timer--;
+        }
+
+        if (chip8.sound_timer > 0) {
+            if (chip8.sound_timer == 1) {
+                PlaySound(wav);
+            }
+            chip8.sound_timer--;
+        }
+
+        lastTick += (1.0 / 60.0);
+    }
 }
 
 void execute(){
@@ -342,35 +364,147 @@ void execute(){
 		break;
 	}
 }
+
+Rectangle chip8Panel = { 0, 0, CHIP_W, CHIP_H };
+Rectangle stackPanel   = { CHIP_W+10, 0, 260, 320 };
+Rectangle disasmPanel  = { 0, 360, 1240, 420 };
+
+void DrawPanel(Rectangle r, const char *title)
+{
+    DrawRectangleRec(r, (Color){30, 30, 30, 255});
+    DrawRectangleLinesEx(r, 1, (Color){120, 120, 120, 255});
+    DrawText(title, r.x + 6, r.y + 6, 16, RAYWHITE);
+}
+
+void DrawStackView(Rectangle r)
+{
+    BeginScissorMode(r.x, r.y, r.width, r.height);
+
+    int y = r.y + 30;
+
+    for (int i = 0; i < 16; i++) {
+        Color col = (i == chip8.sp) ? YELLOW : RAYWHITE;
+        DrawText(TextFormat("%02X: 0x%04X", i, chip8.V[i]),
+                 r.x + 10, y, 14, col);
+        y += 18;
+    }
+
+    EndScissorMode();
+}
+
+void DrawDisassembler(Rectangle r)
+{
+    BeginScissorMode(r.x, r.y, r.width, r.height);
+
+    int y = r.y + 30;
+    uint16_t pc = chip8.pc;
+
+    for (int i = -5; i <= 10; i++) {
+        uint16_t addr = pc + (i * 2);
+
+        if (addr >= 4096 - 1) continue;
+
+        uint16_t opcode =
+            (chip8.memory[addr] << 8) | chip8.memory[addr + 1];
+
+        Color col = (i == 0) ? YELLOW : RAYWHITE;
+
+        DrawText(
+            TextFormat("%04X  %04X", addr, opcode),
+            r.x + 10, y, 16, col
+        );
+
+        y += 18;
+    }
+
+    EndScissorMode();
+}
+
+void UpdateDrawFrame(void);
+
 int main ()
 {
 
 	SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_HIGHDPI);
 	//SetExitKey(0);
 	InitWindow(1280, 800, "Chip8");
-	SearchAndSetResourceDir("resources");
+	//SearchAndSetResourceDir("resources");
 	InitAudioDevice();
-    Sound Wav = LoadSound("BEEP2.wav");
+    Sound Wav = LoadSound("resources/BEEP2.wav");
 	initalize();
-	if(loadROM("roms\\PONG")){
-		return 1;
-	}
-while (!WindowShouldClose())
-{
-    // Run CPU cycles
-    for (int i = 0; i < 10; i++) {
-        execute();
+	 if(loadROM("resources/roms/PONG")){
+        // Log on failure so you can see it in browser console
+        TraceLog(LOG_ERROR, "Failed to load ROM resources/roms/PONG");
+        return 1;
     }
 
-    BeginDrawing();
-    ClearBackground(BLACK);   // ALWAYS clear ONCE per frame
-	updateTimers(Wav);
-	UpdateChip8Keys();
-    drawDisplay();            // ALWAYS draw framebuffers
-    EndDrawing();
-}
+	float clock_speed=700.0f;
+	int cycles_per_frame = (int)(clock_speed / 60.0f);
+	bool pause = false;
+	#if defined(PLATFORM_WEB)
+    	emscripten_set_main_loop(UpdateDrawFrame, 0, 1);
+	#else
+	SetTargetFPS(60);
+	while (!WindowShouldClose())
+	{
+		if (IsKeyPressed(KEY_SPACE)) pause = !pause;
+
+		if (!pause) {
+			for (int i = 0; i < cycles_per_frame; i++) {
+				execute();
+			}
+			updateTimers(Wav);
+		}
+
+		UpdateChip8Keys();
+
+		BeginDrawing();
+		ClearBackground(BLACK);
+
+		DrawPanel(stackPanel,  "Stack");
+		DrawPanel(chip8Panel,  "Display");
+		DrawPanel(disasmPanel, "Disassembler");
+
+		DrawStackView(stackPanel);
+		DrawDisassembler(disasmPanel);
+		drawDisplay();
+
+		EndDrawing();
+	}
+	#endif
 	UnloadSound(Wav);
 	CloseAudioDevice();
 	CloseWindow();
 	return 0;
+}
+
+void UpdateDrawFrame(void)
+{
+	static bool pause = false;
+	static float clock_speed = 700.0f;
+	static int cycles_per_frame = (int)(700.0f / 60.0f);
+	Sound Wav = LoadSound("resources/BEEP2.wav");
+	if (IsKeyPressed(KEY_SPACE)) pause = !pause;
+
+	if (!pause) {
+		for (int i = 0; i < cycles_per_frame; i++) {
+			execute();
+		}
+		updateTimers(Wav);
+	}
+
+	UpdateChip8Keys();
+
+	BeginDrawing();
+	ClearBackground(BLACK);
+
+	DrawPanel(stackPanel,  "Stack");
+	DrawPanel(chip8Panel,  "Display");
+	DrawPanel(disasmPanel, "Disassembler");
+
+	DrawStackView(stackPanel);
+	DrawDisassembler(disasmPanel);
+	drawDisplay();
+
+	EndDrawing();
 }
