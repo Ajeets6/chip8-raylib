@@ -1,4 +1,6 @@
 #include "raylib.h"
+#define RAYGUI_IMPLEMENTATION
+#include "raygui.h"
 //#include "resource_dir.h"	// utility header for SearchAndSetResourceDir
 #include <stdio.h>
 #include <stdint.h>
@@ -6,9 +8,22 @@
 #if defined(PLATFORM_WEB)
     #include <emscripten/emscripten.h>
 #endif
+
+
+#define WINDOW_WIDTH  900
+#define WINDOW_HEIGHT 800
 #define CHIP_SCALE 10
 #define CHIP_W     (64 * CHIP_SCALE)
 #define CHIP_H     (32 * CHIP_SCALE)
+#define MENU_HEIGHT 40
+#define UI_OFFSET_X 10
+#define UI_OFFSET_Y (10 + MENU_HEIGHT)
+#define PANEL_SPACING 10
+#define SIDE_PANEL_WIDTH 230
+#define MAX_ROMS 64
+
+
+Sound Wav;
 
 struct Chip8{
 	uint8_t memory[4096];
@@ -37,7 +52,7 @@ void initalize(){
 
 	memset(chip8.display,0,64*32);
 	memset(chip8.memory,0,4096);
-	memset(chip8.stack,0,16);
+	memset(chip8.stack,0,sizeof(chip8.stack));
 	memset(chip8.V,0,16);
 
 	uint8_t fonts[80] ={
@@ -61,6 +76,7 @@ void initalize(){
 	for(int i=0;i<80;i++){
 		chip8.memory[i]=fonts[i];
 		}
+
 }
 
 void UpdateChip8Keys(void)
@@ -107,12 +123,15 @@ int loadROM(const char* filename){
 
 void drawDisplay(void)
 {
+	int xOffset = UI_OFFSET_X + 4;
+	int yOffset = UI_OFFSET_Y + 4;
+
     for (int y = 0; y < 32; y++) {
         for (int x = 0; x < 64; x++) {
             if (chip8.display[x + y * 64]) {
                 DrawRectangle(
-                    x * CHIP_SCALE,
-                    y * CHIP_SCALE,
+                    xOffset + x * CHIP_SCALE,
+                    yOffset + y * CHIP_SCALE,
                     CHIP_SCALE,
                     CHIP_SCALE,
                     WHITE
@@ -122,8 +141,9 @@ void drawDisplay(void)
     }
 }
 
-void updateTimers(Sound wav)
+void updateTimers()
 {
+
     static double lastTick = 0.0;
     double now = GetTime();
 
@@ -135,7 +155,7 @@ void updateTimers(Sound wav)
 
         if (chip8.sound_timer > 0) {
             if (chip8.sound_timer == 1) {
-                PlaySound(wav);
+                PlaySound(Wav);
             }
             chip8.sound_timer--;
         }
@@ -268,24 +288,26 @@ void execute(){
         break;
     case 0xD000:
 		{
-			uint8_t x=chip8.V[X]%64;
-			uint8_t y=chip8.V[Y]%32;
-			uint8_t width=8;
-			uint8_t height=n;
-			chip8.V[0xF]=0;
-			for(int row=0;row<height;row++){
-				uint8_t spriteByte=chip8.memory[chip8.I+row];
-				for(int col=0;col<width;col++){
-					if((spriteByte & (0x80>>col))!=0){
-						uint16_t displayIndex=(x+col+(y+row)*64);
-						if(chip8.display[displayIndex]){
-							chip8.V[0xF]=1;
-						}
-						chip8.display[displayIndex]^=1;
+			uint8_t x = chip8.V[X] % 64;
+			uint8_t y = chip8.V[Y] % 32;
+			uint8_t height = n;
+			chip8.V[0xF] = 0;
+			for (int row = 0; row < height; row++) {
+				uint16_t spriteAddr = chip8.I + row;
+				if (spriteAddr >= sizeof(chip8.memory)) break;
+				uint8_t spriteByte = chip8.memory[spriteAddr];
+				for (int col = 0; col < 8; col++) {
+					if ((spriteByte & (0x80 >> col)) == 0) continue;
+					uint8_t pixelX = (x + col) % 64;
+					uint8_t pixelY = (y + row) % 32;
+					uint16_t displayIndex = pixelX + pixelY * 64;
+					if (chip8.display[displayIndex]) {
+						chip8.V[0xF] = 1;
 					}
+					chip8.display[displayIndex] ^= 1;
 				}
 			}
-			chip8.drawFlag=1;
+			chip8.drawFlag = 1;
 		}
 
         break;
@@ -364,10 +386,29 @@ void execute(){
 		break;
 	}
 }
+static bool romDropdownOpen = false;
+static int romIndex = -1;
 
-Rectangle chip8Panel = { 0, 0, CHIP_W, CHIP_H };
-Rectangle stackPanel   = { CHIP_W+10, 0, 260, 320 };
-Rectangle disasmPanel  = { 0, 360, 1240, 420 };
+Rectangle menuBar = { 0, 0, WINDOW_WIDTH, MENU_HEIGHT };
+Rectangle romDrop = { UI_OFFSET_X, 5, 220, MENU_HEIGHT - 10 };
+Rectangle chip8Panel = {
+	UI_OFFSET_X,
+	UI_OFFSET_Y,
+	CHIP_W,
+	CHIP_H
+};
+Rectangle stackPanel = {
+	UI_OFFSET_X + CHIP_W + PANEL_SPACING,
+	UI_OFFSET_Y,
+	SIDE_PANEL_WIDTH,
+	CHIP_H
+};
+Rectangle disasmPanel = {
+	UI_OFFSET_X,
+	UI_OFFSET_Y + CHIP_H + PANEL_SPACING,
+	WINDOW_WIDTH - (2 * UI_OFFSET_X),
+	WINDOW_HEIGHT - (UI_OFFSET_Y + CHIP_H + PANEL_SPACING + UI_OFFSET_X)
+};
 
 void DrawPanel(Rectangle r, const char *title)
 {
@@ -420,6 +461,27 @@ void DrawDisassembler(Rectangle r)
     EndScissorMode();
 }
 
+char romNames[MAX_ROMS][128];
+int romCount = 0;
+
+void LoadRomList(void)
+{
+	romCount = 0;
+
+	FilePathList files = LoadDirectoryFiles("resources/roms");
+
+	for (int i = 0; i < files.count && romCount < MAX_ROMS; i++) {
+		if (IsFileExtension(files.paths[i], ".ch8;.rom")) {
+			const char *name = GetFileName(files.paths[i]);
+			strncpy(romNames[romCount], name, 127);
+			romNames[romCount][127] = '\0';
+			romCount++;
+		}
+	}
+
+	UnloadDirectoryFiles(files);
+}
+
 void UpdateDrawFrame(void);
 
 int main ()
@@ -427,13 +489,13 @@ int main ()
 
 	SetConfigFlags(FLAG_VSYNC_HINT | FLAG_WINDOW_HIGHDPI);
 	//SetExitKey(0);
-	InitWindow(1280, 800, "Chip8");
+	InitWindow(WINDOW_WIDTH, WINDOW_HEIGHT, "Chip8");
 	//SearchAndSetResourceDir("resources");
 	InitAudioDevice();
-    Sound Wav = LoadSound("resources/BEEP2.wav");
+    Wav = LoadSound("resources/BEEP2.wav");
 	initalize();
-	 if(loadROM("resources/roms/PONG")){
-        // Log on failure so you can see it in browser console
+	LoadRomList();
+	 if(loadROM("resources/roms/PONG.ch8")){
         TraceLog(LOG_ERROR, "Failed to load ROM resources/roms/PONG");
         return 1;
     }
@@ -447,29 +509,7 @@ int main ()
 	SetTargetFPS(60);
 	while (!WindowShouldClose())
 	{
-		if (IsKeyPressed(KEY_SPACE)) pause = !pause;
-
-		if (!pause) {
-			for (int i = 0; i < cycles_per_frame; i++) {
-				execute();
-			}
-			updateTimers(Wav);
-		}
-
-		UpdateChip8Keys();
-
-		BeginDrawing();
-		ClearBackground(BLACK);
-
-		DrawPanel(stackPanel,  "Stack");
-		DrawPanel(chip8Panel,  "Display");
-		DrawPanel(disasmPanel, "Disassembler");
-
-		DrawStackView(stackPanel);
-		DrawDisassembler(disasmPanel);
-		drawDisplay();
-
-		EndDrawing();
+		UpdateDrawFrame();
 	}
 	#endif
 	UnloadSound(Wav);
@@ -482,18 +522,26 @@ void UpdateDrawFrame(void)
 {
 	static bool pause = false;
 	static float clock_speed = 700.0f;
-	static int cycles_per_frame = (int)(700.0f / 60.0f);
-	Sound Wav = LoadSound("resources/BEEP2.wav");
+	static double cyclesAccumulator = 0.0;
 	if (IsKeyPressed(KEY_SPACE)) pause = !pause;
 
-	if (!pause) {
-		for (int i = 0; i < cycles_per_frame; i++) {
+	UpdateChip8Keys();
+
+	double frameTime = GetFrameTime();
+
+	if (pause) {
+		cyclesAccumulator = 0.0;
+	} else {
+		cyclesAccumulator += frameTime * clock_speed;
+		int cyclesToRun = (int)cyclesAccumulator;
+		const int maxCyclesPerFrame = 1200;
+		if (cyclesToRun > maxCyclesPerFrame) cyclesToRun = maxCyclesPerFrame;
+		cyclesAccumulator -= cyclesToRun;
+		for (int i = 0; i < cyclesToRun; i++) {
 			execute();
 		}
-		updateTimers(Wav);
+		updateTimers();
 	}
-
-	UpdateChip8Keys();
 
 	BeginDrawing();
 	ClearBackground(BLACK);
@@ -505,6 +553,39 @@ void UpdateDrawFrame(void)
 	DrawStackView(stackPanel);
 	DrawDisassembler(disasmPanel);
 	drawDisplay();
+
+	GuiPanel(menuBar, NULL);
+
+	static char romListText[512] = "";
+	romListText[0] = '\0';
+	size_t used = 0;
+
+	for (int i = 0; i < romCount; i++) {
+		size_t nameLen = strlen(romNames[i]);
+		if (used + nameLen + 1 >= sizeof(romListText)) break;
+		memcpy(romListText + used, romNames[i], nameLen);
+		used += nameLen;
+		if (i < romCount - 1) {
+			if (used + 1 >= sizeof(romListText)) break;
+			romListText[used++] = ';';
+		}
+	}
+	romListText[used] = '\0';
+
+	bool dropdownAction = GuiDropdownBox(romDrop, romListText, &romIndex, romDropdownOpen);
+
+	if (dropdownAction) {
+		romDropdownOpen = !romDropdownOpen;
+
+		if (!romDropdownOpen && romIndex >= 0 && romIndex < romCount) {
+			char path[256];
+			snprintf(path, sizeof(path), "resources/roms/%s", romNames[romIndex]);
+			initalize();
+			if (loadROM(path) != 0) {
+				TraceLog(LOG_ERROR, TextFormat("Failed to load ROM %s", path));
+			}
+		}
+	}
 
 	EndDrawing();
 }
