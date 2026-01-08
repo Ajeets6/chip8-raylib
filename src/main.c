@@ -179,10 +179,10 @@ void execute(){
 	switch (opcode & 0xF000) {
     case 0x0000:
         switch(opcode & 0x00FF){
-				case 0x00E0: // CLS
+				case 0x00E0:{ // CLS
 					memset(chip8.display,0,64*32);
 					chip8.drawFlag = 1;
-					break;
+					break;}
 				case 0x00EE: // RET
 					chip8.sp--;
 					chip8.pc=chip8.stack[chip8.sp];
@@ -235,11 +235,12 @@ void execute(){
             case 0x3:
 				chip8.V[X] ^=chip8.V[Y];
                 break;
-            case 0x4:
+            case 0x4:{
 				uint16_t sum=chip8.V[X]+chip8.V[Y];
 				chip8.V[0xF]=(sum>0xFF)?1:0;
 				chip8.V[X]=sum&0xFF;
                 break;
+			}
             case 0x5:
 				chip8.V[0xF]=(chip8.V[X]>chip8.V[Y])?1:0;
 				chip8.V[X]-=chip8.V[Y];
@@ -282,10 +283,11 @@ void execute(){
     case 0xB000:
 		chip8.pc=nnn+chip8.V[0];
         break;
-    case 0xC000:
+    case 0xC000:{
 		int randValue = GetRandomValue(0, 255);
 		chip8.V[X]=randValue & kk;
         break;
+	}
     case 0xD000:
 		{
 			uint8_t x = chip8.V[X] % 64;
@@ -335,7 +337,7 @@ void execute(){
             case 0x07:
 				chip8.V[X]=chip8.delay_timer;
                 break;
-            case 0x0A:
+            case 0x0A:{
 
 				bool keyPressed = false;
 
@@ -351,6 +353,7 @@ void execute(){
 					chip8.pc -= 2;   // stall
 				}
 				break;
+			}
             case 0x15:
 				chip8.delay_timer=chip8.V[X];
                 break;
@@ -372,11 +375,13 @@ void execute(){
 				for(int index=0;index<=X;index++){
 					chip8.memory[chip8.I+index]=chip8.V[index];
 				}
+				chip8.I += X + 1;
                 break;
             case 0x65:
 				for(int index=0;index<=X;index++){
 					chip8.V[index]=chip8.memory[chip8.I+index];
 				}
+				chip8.I += X + 1;
                 break;
         }
 
