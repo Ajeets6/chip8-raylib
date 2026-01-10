@@ -430,7 +430,7 @@ static void ResetHistory(void)
     stackHistCount  = 0; stackHistHead  = 0;
     historyAccum = 0.0;
 
-    // seed with current state so panels aren't empty after reset
+
     PushDisasmSample(chip8.pc);
     PushStackSample();
 }
@@ -473,23 +473,23 @@ void DrawStackView(Rectangle r)
     for (int row = 0; row < stackHistCount; row++) {
         int idx = (stackHistHead - 1 - row + STACK_HISTORY_LEN) % STACK_HISTORY_LEN;
 
-        // small header line per snapshot
+
         DrawText(TextFormat("SP=%d", stackSpHist[idx]), (int)r.x + 10, y, 14, YELLOW);
         y += 18;
 
-        // show stack entries (compact two columns to fit)
+
         for (int i = 0; i < 16; i++) {
             int col = (i < 8) ? 0 : 1;
             int ii  = (i < 8) ? i : (i - 8);
 
-            Color c = (i == (int)stackSpHist[idx] - 1) ? ORANGE : RAYWHITE; // top-of-stack approx
+            Color c = (i == (int)stackSpHist[idx] - 1) ? ORANGE : RAYWHITE;
             DrawText(TextFormat("%02X:%04X", i, stackHist[idx][i]),
                      (int)r.x + 10 + col * 110, y + ii * 16, 12, c);
         }
 
         y += 8 * 16 + 8;
 
-        // stop if we run out of panel
+
         if (y > r.y + r.height - 18) break;
     }
 
@@ -500,22 +500,46 @@ void DrawDisassembler(Rectangle r)
 {
     BeginScissorMode((int)r.x, (int)r.y, (int)r.width, (int)r.height);
 
-    int y = (int)r.y + 30;
+    // Layout
+    const int headerH = 30;
+    const int rowH    = 18;
+    const int cellW   = 92;      // width per opcode cell
+    const int cols    = (int)((r.width - 20) / cellW);
+    const int maxCols = (cols < 1) ? 1 : cols;
 
-    // Each history row shows the opcode at that PC (sampled), plus the PC
+
+
+
+    int y = (int)r.y + headerH;
+
+    // Newest snapshot first (row=0)
     for (int row = 0; row < disasmHistCount; row++) {
         int idx = (disasmHistHead - 1 - row + DISASM_HISTORY_LEN) % DISASM_HISTORY_LEN;
-        uint16_t pc = disasmPcHist[idx];
+        uint16_t basePc = disasmPcHist[idx];
 
-        if (pc >= 4096 - 1) continue;
 
-        uint16_t opcode = ((uint16_t)chip8.memory[pc] << 8) | chip8.memory[pc + 1];
+        Color rowCol = (row == 0) ? YELLOW : RAYWHITE;
+        DrawText(TextFormat("%04X:", basePc), (int)r.x + 10, y, 16, rowCol);
 
-        Color col = (row == 0) ? YELLOW : RAYWHITE;
-        DrawText(TextFormat("%04X  %04X", pc, opcode), (int)r.x + 10, y, 16, col);
 
-        y += 18;
-        if (y > r.y + r.height - 18) break;
+        int x = (int)r.x + 80;
+        for (int c = 0; c < maxCols; c++) {
+            uint16_t pc = (uint16_t)(basePc + 2*c);
+            if (pc >= 4096 - 1) break;
+
+            uint16_t opcode = ((uint16_t)chip8.memory[pc] << 8) | chip8.memory[pc + 1];
+
+
+            Color cellCol = (row == 0 && c == 0) ? ORANGE : RAYWHITE;
+
+            DrawText(TextFormat("%04X", opcode), x, y, 16, cellCol);
+            x += cellW;
+
+            if (x > (int)(r.x + r.width - 10)) break;
+        }
+
+        y += rowH;
+        if (y > (int)(r.y + r.height - rowH)) break;
     }
 
     EndScissorMode();
