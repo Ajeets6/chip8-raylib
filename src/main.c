@@ -5,6 +5,7 @@
 #include <stdio.h>
 #include <stdint.h>
 #include <string.h>
+
 #if defined(PLATFORM_WEB)
     #include <emscripten/emscripten.h>
 #endif
@@ -21,7 +22,9 @@
 #define PANEL_SPACING 10
 #define SIDE_PANEL_WIDTH 230
 #define MAX_ROMS 64
-
+#define DISASM_HISTORY_LEN 32
+#define STACK_HISTORY_LEN  24
+#define HISTORY_HZ         15.0
 
 Sound Wav;
 
@@ -393,6 +396,44 @@ void execute(){
 }
 static bool romDropdownOpen = false;
 static int romIndex = -1;
+static uint16_t disasmPcHist[DISASM_HISTORY_LEN];
+static int disasmHistCount = 0;
+static int disasmHistHead  = 0;
+
+// Stack history: store SP + full stack snapshot (small, 16 entries)
+static uint8_t  stackSpHist[STACK_HISTORY_LEN];
+static uint16_t stackHist[STACK_HISTORY_LEN][16];
+static int stackHistCount = 0;
+static int stackHistHead  = 0;
+
+static double historyAccum = 0.0;
+
+static void PushDisasmSample(uint16_t pc)
+{
+    disasmPcHist[disasmHistHead] = pc;
+    disasmHistHead = (disasmHistHead + 1) % DISASM_HISTORY_LEN;
+    if (disasmHistCount < DISASM_HISTORY_LEN) disasmHistCount++;
+}
+
+static void PushStackSample(void)
+{
+    stackSpHist[stackHistHead] = chip8.sp;
+    for (int i = 0; i < 16; i++) stackHist[stackHistHead][i] = chip8.stack[i];
+
+    stackHistHead = (stackHistHead + 1) % STACK_HISTORY_LEN;
+    if (stackHistCount < STACK_HISTORY_LEN) stackHistCount++;
+}
+
+static void ResetHistory(void)
+{
+    disasmHistCount = 0; disasmHistHead = 0;
+    stackHistCount  = 0; stackHistHead  = 0;
+    historyAccum = 0.0;
+
+    // seed with current state so panels aren't empty after reset
+    PushDisasmSample(chip8.pc);
+    PushStackSample();
+}
 
 Rectangle menuBar = { 0, 0, WINDOW_WIDTH, MENU_HEIGHT };
 Rectangle romDrop = { UI_OFFSET_X, 5, 220, MENU_HEIGHT - 10 };
@@ -424,15 +465,32 @@ void DrawPanel(Rectangle r, const char *title)
 
 void DrawStackView(Rectangle r)
 {
-    BeginScissorMode(r.x, r.y, r.width, r.height);
+    BeginScissorMode((int)r.x, (int)r.y, (int)r.width, (int)r.height);
 
-    int y = r.y + 30;
+    int y = (int)r.y + 30;
 
-    for (int i = 0; i < 16; i++) {
-        Color col = (i == chip8.sp) ? YELLOW : RAYWHITE;
-        DrawText(TextFormat("%02X: 0x%04X", i, chip8.V[i]),
-                 r.x + 10, y, 14, col);
+    // Draw newest first
+    for (int row = 0; row < stackHistCount; row++) {
+        int idx = (stackHistHead - 1 - row + STACK_HISTORY_LEN) % STACK_HISTORY_LEN;
+
+        // small header line per snapshot
+        DrawText(TextFormat("SP=%d", stackSpHist[idx]), (int)r.x + 10, y, 14, YELLOW);
         y += 18;
+
+        // show stack entries (compact two columns to fit)
+        for (int i = 0; i < 16; i++) {
+            int col = (i < 8) ? 0 : 1;
+            int ii  = (i < 8) ? i : (i - 8);
+
+            Color c = (i == (int)stackSpHist[idx] - 1) ? ORANGE : RAYWHITE; // top-of-stack approx
+            DrawText(TextFormat("%02X:%04X", i, stackHist[idx][i]),
+                     (int)r.x + 10 + col * 110, y + ii * 16, 12, c);
+        }
+
+        y += 8 * 16 + 8;
+
+        // stop if we run out of panel
+        if (y > r.y + r.height - 18) break;
     }
 
     EndScissorMode();
@@ -440,32 +498,28 @@ void DrawStackView(Rectangle r)
 
 void DrawDisassembler(Rectangle r)
 {
-    BeginScissorMode(r.x, r.y, r.width, r.height);
+    BeginScissorMode((int)r.x, (int)r.y, (int)r.width, (int)r.height);
 
-    int y = r.y + 30;
-    uint16_t pc = chip8.pc;
+    int y = (int)r.y + 30;
 
-    for (int i = -5; i <= 10; i++) {
-        uint16_t addr = pc + (i * 2);
+    // Each history row shows the opcode at that PC (sampled), plus the PC
+    for (int row = 0; row < disasmHistCount; row++) {
+        int idx = (disasmHistHead - 1 - row + DISASM_HISTORY_LEN) % DISASM_HISTORY_LEN;
+        uint16_t pc = disasmPcHist[idx];
 
-        if (addr >= 4096 - 1) continue;
+        if (pc >= 4096 - 1) continue;
 
-        uint16_t opcode =
-            (chip8.memory[addr] << 8) | chip8.memory[addr + 1];
+        uint16_t opcode = ((uint16_t)chip8.memory[pc] << 8) | chip8.memory[pc + 1];
 
-        Color col = (i == 0) ? YELLOW : RAYWHITE;
-
-        DrawText(
-            TextFormat("%04X  %04X", addr, opcode),
-            r.x + 10, y, 16, col
-        );
+        Color col = (row == 0) ? YELLOW : RAYWHITE;
+        DrawText(TextFormat("%04X  %04X", pc, opcode), (int)r.x + 10, y, 16, col);
 
         y += 18;
+        if (y > r.y + r.height - 18) break;
     }
 
     EndScissorMode();
 }
-
 char romNames[MAX_ROMS][128];
 int romCount = 0;
 
@@ -533,6 +587,13 @@ void UpdateDrawFrame(void)
 	UpdateChip8Keys();
 
 	double frameTime = GetFrameTime();
+	historyAccum += frameTime;
+    const double samplePeriod = 1.0 / HISTORY_HZ;
+    while (historyAccum >= samplePeriod) {
+        historyAccum -= samplePeriod;
+        PushDisasmSample(chip8.pc);
+        PushStackSample();
+    }
 
 	if (pause) {
 		cyclesAccumulator = 0.0;
@@ -586,6 +647,7 @@ void UpdateDrawFrame(void)
 			char path[256];
 			snprintf(path, sizeof(path), "resources/roms/%s", romNames[romIndex]);
 			initalize();
+			ResetHistory();
 			if (loadROM(path) != 0) {
 				TraceLog(LOG_ERROR, TextFormat("Failed to load ROM %s", path));
 			}
