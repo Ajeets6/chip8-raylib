@@ -1,6 +1,8 @@
 # Chip-8 emultor using raylib in C
 This is a simple Chip-8 emulator written in C using the raylib library for graphics and input handling. It is designed to be cross-platform and easy to build on Windows, Linux, and MacOS.
 
+![demo](demo.gif)
+
 
 # Windows Users
 There are two compiler toolchains available for windows, MinGW-W64 (a free compiler using GCC), and Microsoft Visual Studio
