@@ -400,7 +400,7 @@ static uint16_t disasmPcHist[DISASM_HISTORY_LEN];
 static int disasmHistCount = 0;
 static int disasmHistHead  = 0;
 
-// Stack history: store SP + full stack snapshot (small, 16 entries)
+
 static uint8_t  stackSpHist[STACK_HISTORY_LEN];
 static uint16_t stackHist[STACK_HISTORY_LEN][16];
 static int stackHistCount = 0;
@@ -468,16 +468,12 @@ void DrawStackView(Rectangle r)
     BeginScissorMode((int)r.x, (int)r.y, (int)r.width, (int)r.height);
 
     int y = (int)r.y + 30;
-
-    // Draw newest first
     for (int row = 0; row < stackHistCount; row++) {
         int idx = (stackHistHead - 1 - row + STACK_HISTORY_LEN) % STACK_HISTORY_LEN;
 
 
         DrawText(TextFormat("SP=%d", stackSpHist[idx]), (int)r.x + 10, y, 14, YELLOW);
         y += 18;
-
-
         for (int i = 0; i < 16; i++) {
             int col = (i < 8) ? 0 : 1;
             int ii  = (i < 8) ? i : (i - 8);
@@ -488,8 +484,6 @@ void DrawStackView(Rectangle r)
         }
 
         y += 8 * 16 + 8;
-
-
         if (y > r.y + r.height - 18) break;
     }
 
@@ -499,51 +493,34 @@ void DrawStackView(Rectangle r)
 void DrawDisassembler(Rectangle r)
 {
     BeginScissorMode((int)r.x, (int)r.y, (int)r.width, (int)r.height);
-
-    // Layout
     const int headerH = 30;
     const int rowH    = 18;
-    const int cellW   = 92;      // width per opcode cell
+    const int cellW   = 92;
     const int cols    = (int)((r.width - 20) / cellW);
     const int maxCols = (cols < 1) ? 1 : cols;
-
-
-
-
     int y = (int)r.y + headerH;
-
-    // Newest snapshot first (row=0)
     for (int row = 0; row < disasmHistCount; row++) {
         int idx = (disasmHistHead - 1 - row + DISASM_HISTORY_LEN) % DISASM_HISTORY_LEN;
         uint16_t basePc = disasmPcHist[idx];
-
-
         Color rowCol = (row == 0) ? YELLOW : RAYWHITE;
         DrawText(TextFormat("%04X:", basePc), (int)r.x + 10, y, 16, rowCol);
-
-
         int x = (int)r.x + 80;
         for (int c = 0; c < maxCols; c++) {
             uint16_t pc = (uint16_t)(basePc + 2*c);
             if (pc >= 4096 - 1) break;
-
             uint16_t opcode = ((uint16_t)chip8.memory[pc] << 8) | chip8.memory[pc + 1];
-
-
             Color cellCol = (row == 0 && c == 0) ? ORANGE : RAYWHITE;
-
             DrawText(TextFormat("%04X", opcode), x, y, 16, cellCol);
             x += cellW;
-
             if (x > (int)(r.x + r.width - 10)) break;
         }
-
         y += rowH;
         if (y > (int)(r.y + r.height - rowH)) break;
     }
 
     EndScissorMode();
 }
+
 char romNames[MAX_ROMS][128];
 int romCount = 0;
 
@@ -583,9 +560,6 @@ int main ()
         return 1;
     }
 
-	float clock_speed=700.0f;
-	int cycles_per_frame = (int)(clock_speed / 60.0f);
-	bool pause = false;
 	#if defined(PLATFORM_WEB)
     	emscripten_set_main_loop(UpdateDrawFrame, 0, 1);
 	#else
@@ -606,8 +580,17 @@ void UpdateDrawFrame(void)
 	static bool pause = false;
 	static float clock_speed = 700.0f;
 	static double cyclesAccumulator = 0.0;
-	if (IsKeyPressed(KEY_SPACE)) pause = !pause;
+	static bool started = false;
 
+	if (started && IsKeyPressed(KEY_SPACE)) pause = !pause;
+	if (!started) {
+        if (GetKeyPressed() != 0 || IsMouseButtonPressed(MOUSE_BUTTON_LEFT) || IsMouseButtonPressed(MOUSE_BUTTON_RIGHT)) {
+            started = true;
+            pause = false;
+            cyclesAccumulator = 0.0;
+            ResetHistory();
+        }
+    }
 	UpdateChip8Keys();
 
 	double frameTime = GetFrameTime();
@@ -619,25 +602,36 @@ void UpdateDrawFrame(void)
         PushStackSample();
     }
 
-	if (pause) {
-		cyclesAccumulator = 0.0;
-	} else {
-		cyclesAccumulator += frameTime * clock_speed;
-		int cyclesToRun = (int)cyclesAccumulator;
-		const int maxCyclesPerFrame = 1200;
-		if (cyclesToRun > maxCyclesPerFrame) cyclesToRun = maxCyclesPerFrame;
-		cyclesAccumulator -= cyclesToRun;
-		for (int i = 0; i < cyclesToRun; i++) {
-			execute();
-		}
-		updateTimers();
-	}
+	   if (started) {
+        historyAccum += frameTime;
+        const double samplePeriod = 1.0 / HISTORY_HZ;
+        while (historyAccum >= samplePeriod) {
+            historyAccum -= samplePeriod;
+            PushDisasmSample(chip8.pc);
+            PushStackSample();
+        }
+    }
+
+    if (!started || pause) {
+        cyclesAccumulator = 0.0;
+    } else {
+        cyclesAccumulator += frameTime * clock_speed;
+        int cyclesToRun = (int)cyclesAccumulator;
+        const int maxCyclesPerFrame = 1200;
+        if (cyclesToRun > maxCyclesPerFrame) cyclesToRun = maxCyclesPerFrame;
+        cyclesAccumulator -= cyclesToRun;
+
+        for (int i = 0; i < cyclesToRun; i++) {
+            execute();
+        }
+        updateTimers();
+    }
 
 	BeginDrawing();
 	ClearBackground(BLACK);
 
 	DrawPanel(stackPanel,  "Stack");
-	DrawPanel(chip8Panel,  "Display");
+	DrawPanel(chip8Panel,  "");
 	DrawPanel(disasmPanel, "Disassembler");
 
 	DrawStackView(stackPanel);
@@ -677,6 +671,15 @@ void UpdateDrawFrame(void)
 			}
 		}
 	}
+	  if (!started) {
+        const char *msg = "Press any key to start";
+        int fontSize = 28;
+        int tw = MeasureText(msg, fontSize);
+        int x = (int)(chip8Panel.x + (chip8Panel.width  - tw) / 2);
+        int y = (int)(chip8Panel.y + (chip8Panel.height - fontSize) / 2);
 
+        DrawRectangle((int)chip8Panel.x + 20, y - 16, (int)chip8Panel.width - 40, fontSize + 32, (Color){0,0,0,180});
+        DrawText(msg, x, y, fontSize, RAYWHITE);
+    }
 	EndDrawing();
 }
