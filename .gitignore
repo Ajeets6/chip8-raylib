@@ -405,3 +405,11 @@ Makefile
 *.swp
 *.swo
 *.swn
+
+
+
+#compile files
+main.*
+Makefile.Web
+minshell.html
+build-*
