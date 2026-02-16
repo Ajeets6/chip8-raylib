@@ -413,3 +413,4 @@ main.*
 Makefile.Web
 minshell.html
 build-*
+chip8-raylib.exe
